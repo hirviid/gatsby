@@ -150,7 +150,7 @@ exports.buildForeignReferenceMap = ({
 }
 
 function createTextNode(node, key, text, createNode) {
-  const str = _.isString(text) ? text : ` `
+  const str = _.isString(text) && text !== `` ? text : ` `
   const textNode = {
     id: `${node.id}${key}TextNode`,
     parent: node.id,
@@ -226,6 +226,60 @@ exports.createContentTypeNodes = ({
       // Get localized fields.
       const entryItemFields = _.mapValues(entryItem.fields, v => getField(v))
 
+      //---- BEGIN PATCH https://github.com/gatsbyjs/gatsby/pull/2037
+      // If entry is not set by user, provide an empty value of the same type
+      const setBlankValue = contentTypeItemField => {
+        if (contentTypeItemField.type.match(/Symbol|Text|Date/)) {
+          return ``
+        } else if (contentTypeItemField.type.match(/Number/)) {
+          return NaN
+        } else if (contentTypeItemField.type.match(/Link/) && contentTypeItemField.linkType.match(/Asset/)) {
+          return {
+            sys:
+              {
+                space: {},
+                id: `c3lW7OEYeqsWAcaIcSqOs2m`,
+                type: `Asset`,
+              },
+            fields: { title: {}, file: {} } ,
+          }
+        } else if (
+          contentTypeItemField.type.match(
+            /Object|Location|Reference|Media|Link/
+          )
+        ) {
+          return {}
+        } else if (contentTypeItemField.type.match(/Array/)) {
+          // Setting values recursively is useful for 'never defined entries'
+          // TODO: Does not work for arrays of references, assets, objects, ...
+          return [setBlankValue(contentTypeItemField.items)]
+        } else if (contentTypeItemField.type.match(/Boolean/)) {
+          return false
+        }
+      }
+      contentTypeItem.fields.forEach(contentTypeItemField => {
+        const fieldName = contentTypeItemField.id
+        if (typeof entryItemFields[fieldName] === `undefined`) {
+          entryItemFields[fieldName] = setBlankValue(contentTypeItemField)
+        }
+        // Add a "json" property on Objects with the stringified version of its content
+        // This allows for querying objects with changing properties
+        // TODO: how to handle a property "json" entered by user? Should we just
+        // use a more specific name than "json" for our created property
+        if (contentTypeItemField.type === `Object`) {
+          if (typeof entryItemFields[fieldName].json === `undefined`) {
+            entryItemFields[fieldName].json = JSON.stringify(
+              entryItemFields[fieldName]
+            )
+          } else {
+            const { json, ...originalObj } = entryItemFields[fieldName]
+            entryItemFields[fieldName].json = JSON.stringify(originalObj)
+          }
+        }
+      })
+      //---- END PATCH
+
+
       // Prefix any conflicting fields
       // https://github.com/gatsbyjs/gatsby/pull/1084#pullrequestreview-41662888
       conflictFields.forEach(conflictField => {
@@ -240,6 +294,7 @@ exports.createContentTypeNodes = ({
           const entryItemFieldValue = entryItemFields[entryItemFieldKey]
           if (Array.isArray(entryItemFieldValue)) {
             if (
+              entryItemFieldValue[0] &&
               entryItemFieldValue[0].sys &&
               entryItemFieldValue[0].sys.type &&
               entryItemFieldValue[0].sys.id
